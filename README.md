@@ -47,7 +47,7 @@ The workflow uses a working directory variable:
 
 ```bash
 YOUTUBE_WORKDIR=/data/youtube_video
-
+```
 
 ======================================================
 # YouTube to Text Telegram Bot (n8n)
@@ -99,3 +99,4 @@ Workflow использует переменную рабочей директо
 
 ```bash
 YOUTUBE_WORKDIR=/data/youtube_video
+```
