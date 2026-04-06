@@ -1,0 +1,980 @@
+{
+  "name": "you-tube_to_text",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const text = $json.message?.text?.trim() || '';\nconst chatId = $json.message?.chat?.id ?? $json.chat?.id ?? null;\n\nconst ytRegex = /^(https?:\\/\\/)?(www\\.)?(youtube\\.com|youtu\\.be)\\//i;\n\nif (!text) {\n  return [{\n    is_valid: false,\n    reason: 'empty',\n    chat_id: chatId,\n  }];\n}\n\nif (!ytRegex.test(text)) {\n  return [{\n    is_valid: false,\n    url: text,\n    reason: 'not_youtube',\n    chat_id: chatId,\n  }];\n}\n\nreturn [{\n  is_valid: true,\n  url: text,\n  chat_id: chatId,\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -464
+      ],
+      "id": "1d0a7643-4921-4469-8c26-7d01f14d77c3",
+      "name": "Validate URL input"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "734ae16b-abc2-4cdb-b33a-bd18064653da",
+              "leftValue": "={{ $('Validate URL input').item.json.is_valid }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        384,
+        -192
+      ],
+      "id": "6a3b5c9b-868a-4a44-a112-c950a37fd24c",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $json.stdout || '';\nconst lines = stdout.trim().split('\\n');\nconst lastLine = lines[lines.length - 1].trim();  // тут как раз \"/home/node/..._240.mp4\"\n\nreturn [{\n  ...$json,\n  video_path: lastLine,\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        -208
+      ],
+      "id": "85f593d7-47a7-42ab-8946-89cb286d8944",
+      "name": "Extract video_path from yt-dlp"
+    },
+    {
+      "parameters": {
+        "command": "=CHAT_ID=\"{{ $node['Validate URL input'].json['chat_id'] || 'nochat' }}\"\n\nOUT_DIR=\"${YOUTUBE_WORKDIR:-/data/youtube_video}\"\nmkdir -p \"$OUT_DIR\"\n\nVIDEO=\"${OUT_DIR}/${CHAT_ID}_240.mp4\"\nAUDIO=\"${OUT_DIR}/${CHAT_ID}_audio.m4a\"\n\n# на всякий случай убиваем старое аудио\nrm -f \"$AUDIO\"\n\n# вытащить только аудио из текущего видео\nffmpeg -y -i \"$VIDEO\" -vn -acodec aac -b:a 128k \"$AUDIO\"\n\necho \"$AUDIO\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1824,
+        -208
+      ],
+      "id": "e47bcd5f-318a-4603-850f-aa56b54e1e83",
+      "name": "FFmpeg: extract audio"
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $json.stdout || '';\nconst lines = stdout.trim().split('\\n');\nconst lastLine = lines[lines.length - 1].trim();  // путь к m4a\n\nreturn [{\n  ...$json,\n  audio_path: lastLine,\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        96
+      ],
+      "id": "c80b7056-cb3d-4384-9393-8cafca91b0ed",
+      "name": "Extract audio_path"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.audio_path }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1264,
+        96
+      ],
+      "id": "bec39a4b-6da9-4a7b-a5f2-d81d67df7dcf",
+      "name": "Read audio file",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        224
+      ],
+      "id": "8d71b156-b3b4-488b-ab22-16a5d0125547",
+      "name": "Transcribe audio",
+      "credentials": {
+        "openAiApi": {
+          "id": "G4C4Wo4D0zrVFdSM",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты ИИ-помощник. По транскрипции аудио с YouTube-ролика делай краткое структурированное описание контента. \nСтиль: очень сжато, по делу, с разделами: \"О чём видео\", \"Ключевые идеи\", \"Практические выводы\".\n"
+            },
+            {
+              "content": "=Вот транскрипция аудио. Сделай описание по правилам выше:\n{{ $json.full_text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [
+        2256,
+        -240
+      ],
+      "id": "8230e791-b35c-443c-a954-eaa8401cd645",
+      "name": "Build summary from transcript",
+      "credentials": {
+        "openAiApi": {
+          "id": "G4C4Wo4D0zrVFdSM",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "Похоже, это невалидная ссылка на YouTube 👀   Отправь, пожалуйста, корректный URL формата: https://youtu.be/... или https://www.youtube.com/watch?v=...",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        576,
+        16
+      ],
+      "id": "32276622-89b1-44d0-87b9-0d2ae60c1bc9",
+      "name": "Send error URL",
+      "webhookId": "fe1f9a9a-1861-4456-9633-044e7ab28dec",
+      "credentials": {
+        "telegramApi": {
+          "id": "U1Ox7xbl2BXHf3rC",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        -624
+      ],
+      "id": "0688285a-1c16-4be0-a7d7-4e893f2c613b",
+      "name": "Telegram Trigger",
+      "webhookId": "5616fdb0-5cba-4c40-8fad-9035879e75bc",
+      "credentials": {
+        "telegramApi": {
+          "id": "U1Ox7xbl2BXHf3rC",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=URL=\"{{ $('Validate URL input').item.json.url }}\"\nCHAT_ID=\"{{ $('Validate URL input').item.json.chat_id || 'nochat' }}\"\n\nOUT_DIR=\"${YOUTUBE_WORKDIR:-/data/youtube_video}\"\nmkdir -p \"$OUT_DIR\"\n\nOUT=\"${OUT_DIR}/${CHAT_ID}_240.mp4\"\n\n# если файл существует — удалить\nrm -f \"$OUT\"\n\nyt-dlp \\\n  -f \"bv*[height<=240][ext=mp4]+ba/b[height<=240]/b\" \\\n  --merge-output-format mp4 \\\n  -o \"$OUT\" \\\n  \"$URL\"\n\necho \"$OUT\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1456,
+        -208
+      ],
+      "id": "726eeec3-e2e1-4e8c-91ba-0634193497ff",
+      "name": "yt-dlp: remove old & save new"
+    },
+    {
+      "parameters": {
+        "command": "=URL=\"{{ $('Validate URL input').item.json.url }}\"\nCHAT_ID=\"{{ $('Validate URL input').item.json.chat_id || 'nochat' }}\"\n\nyt-dlp -e \"$URL\"\necho \"---\"\n\nOUT_DIR=\"${YOUTUBE_WORKDIR:-/data/youtube_video}\"\nmkdir -p \"$OUT_DIR\"\n\nSUB=\"${OUT_DIR}/${CHAT_ID}.ru.vtt\"\nrm -f \"$SUB\"\n\nyt-dlp \\\n  --skip-download \\\n  --write-auto-sub \\\n  --write-sub \\\n  --sub-lang \"ru\" \\\n  --sub-format \"vtt\" \\\n  -o \"${OUT_DIR}/${CHAT_ID}.%(ext)s\" \\\n  \"$URL\"\n\nif [ -f \"$SUB\" ]; then\n  echo \"$SUB\"\nelse\n  echo \"NO_SUBS\"\nfi"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        640,
+        -208
+      ],
+      "id": "aac18be1-3f50-4897-a41b-d6c8498b6659",
+      "name": "yt-dlp: check subtitles"
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $json.stdout || '';\nconst lastLine = stdout.trim().split('\\n').pop().trim();\n\nconst hasSubs = lastLine !== 'NO_SUBS';\n\nreturn [{\n  ...$json,\n  subs_path: hasSubs ? lastLine : null,\n  has_subs: hasSubs,\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -208
+      ],
+      "id": "c2671dfe-0ee9-41b3-b93c-727f1336e84c",
+      "name": "Check subtitles flag"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "aab3e82c-1f18-41fa-b5a2-d585a674c3eb",
+              "leftValue": "={{ $json[\"has_subs\"] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        -208
+      ],
+      "id": "7ab87bd0-5774-47a3-8867-9d01838e9be6",
+      "name": "If has subtitles"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.subs_path }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1536,
+        -384
+      ],
+      "id": "831fc0f3-13cd-4815-b2d6-303a810dd0d4",
+      "name": "Read subtitles file"
+    },
+    {
+      "parameters": {
+        "operation": "binaryToPropery",
+        "options": {
+          "encoding": "utf8"
+        }
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1712,
+        -384
+      ],
+      "id": "bd9bf683-8ee7-482a-b6a2-5acc7af54376",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "command": "=URL=\"{{ $json.url }}\"\n\nyt-dlp --skip-download --print \"%(is_live)s\" \"$URL\"\n"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        880,
+        -464
+      ],
+      "id": "55b79196-6040-4146-baf0-c1ad462b96f6",
+      "name": "Validate URL input1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $json.stdout?.trim() || '';\n\nreturn [{\n  ...$json,\n  is_live: stdout === 'True',\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        -464
+      ],
+      "id": "dd9a4240-f4e4-46bc-9c5e-09ab68021a2d",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "59a608f8-7f2b-4b6c-8f6d-46b68415cba4",
+              "leftValue": "={{$json[\"is_live\"]}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        -464
+      ],
+      "id": "b697d7ad-6cc9-4bb8-93e3-df58b394b58c",
+      "name": "If live"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "Похоже, эта ссылка ведёт на прямой эфир 🎥\nСейчас поток идёт онлайн, поэтому я не могу скачать видео или субтитры.\n\nКогда эфир закончится — пришли ссылку снова 👍\n",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1424,
+        -720
+      ],
+      "id": "3a1a503b-5597-41bd-a197-6ab4c7a2ae01",
+      "name": "Send live",
+      "webhookId": "6f0b53db-4d9f-455b-8ae9-6d8f8568c9c8",
+      "credentials": {
+        "telegramApi": {
+          "id": "U1Ox7xbl2BXHf3rC",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "38e47217-4f98-40fb-99b7-9f24fcef5b18",
+              "leftValue": "={{ $json.message?.text?.trim()?.toLowerCase() }}",
+              "rightValue": "/start",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        352,
+        -624
+      ],
+      "id": "5b650cd9-6507-4836-b550-5a15abeab32b",
+      "name": "If start"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "🔹 Что я делаю ?\nТы отправляешь мне ссылку на YouTube-видео  Я анализирую видео:  если есть субтитры — использую их (это быстрее и точнее)  если субтитров нет — делаю транскрипцию аудио  На основе текста я формирую результат в нужном формате \n_____\n🔹 Я отдаю:  \n1) Очень краткое саммари — суть видео в 2–3 предложениях \n2) Обычное саммари — структурированное описание: о чём видео, ключевые идеи, выводы\n3) Весь текст — полный текст видео, который я отправляю отдельным .txt файлом\n____\n🔹 Важные особенности  \n🚫 Прямые эфиры (live) не обрабатываются  \n📺 Если ссылка ведёт на плейлист или «радио», я беру только первое видео  \n♻️ Каждый новый запрос обрабатывается с нуля — старые файлы не используются  \n💬 Я работаю в рамках одного чата и отвечаю именно тебе  \n____________________________\n▶️ Как начать  ?\nПросто пришли ссылку на YouTube-видео — получишь результат 👍",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        -720
+      ],
+      "id": "d3deaf50-1a3c-4c12-af6f-afba740154a0",
+      "name": "Send a text message",
+      "webhookId": "3663a415-363b-474e-8c4f-36a6e4a510cf",
+      "credentials": {
+        "telegramApi": {
+          "id": "U1Ox7xbl2BXHf3rC",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// data – base64-строка из \"Extract from File\"\nconst base64 = $json.data || '';\nlet raw = Buffer.from(base64, 'base64').toString('utf8');\nraw = raw.replace(/\\r/g, '');\n\n// 1) Убираем VTT-заголовки и таймкоды целыми строками\nconst lines = raw.split('\\n');\n\nconst cleanedLines = [];\nfor (let line of lines) {\n  line = line.trim();\n  if (!line) continue;\n\n  // заголовки\n  if (line === 'WEBVTT') continue;\n  if (line.startsWith('Kind:')) continue;\n  if (line.startsWith('Language:')) continue;\n\n  // таймкоды вида \"00:00:03.199 --> 00:00:05.229 align:start position:0%\"\n  if (/^\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\s+-->\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3}/.test(line)) continue;\n\n  // иногда в твоём тексте проскакивает \"\\n\" как литерал\n  if (line === '\\\\n' || line === '\\\\') continue;\n\n  cleanedLines.push(line);\n}\n\n// 2) В одной строке могут быть inline таймкоды и <c>…</c>.\n//    Превращаем всё в нормальный текст.\nlet textLines = cleanedLines.map((line) => {\n  let s = line;\n\n  // убрать <00:00:00.719> и любые <...> теги (включая <c>, </c>)\n  s = s.replace(/<[^>]+>/g, ' ');\n\n  // нормализуем пробелы\n  s = s.replace(/\\s+/g, ' ').trim();\n\n  // убрать служебные вставки в квадратных скобках\n  // (можешь расширить список)\n  s = s.replace(/\\[(музыка|аплодисменты|смех|шум|вздох)\\]/gi, '').trim();\n\n  // убрать оставшиеся \"пустые\" строки\n  return s;\n}).filter(Boolean);\n\n// 3) Убираем повторы: подряд и в небольшом окне (например последние 6 строк)\nconst out = [];\nconst window = [];            // храним нормализованные строки\nconst WINDOW_SIZE = 6;\n\nconst norm = (s) =>\n  s.toLowerCase()\n   .replace(/[«»\"“”]/g, '\"')\n   .replace(/[^\\p{L}\\p{N}\\s.,!?-]/gu, '')  // выкинуть странные символы, оставить буквы/цифры/пунктуацию\n   .replace(/\\s+/g, ' ')\n   .trim();\n\nfor (const s of textLines) {\n  const n = norm(s);\n  if (!n) continue;\n\n  // 3.1) убрать подряд идущий дубль\n  if (out.length > 0 && norm(out[out.length - 1]) === n) continue;\n\n  // 3.2) убрать повтор в маленьком окне (YouTube часто дублирует одну фразу 2-3 раза подряд)\n  if (window.includes(n)) continue;\n\n  out.push(s);\n\n  window.push(n);\n  if (window.length > WINDOW_SIZE) window.shift();\n}\n\n// 4) Склеиваем в один текст\nlet text = out.join(' ');\n\n// финальная нормализация пробелов\ntext = text.replace(/\\s+/g, ' ').trim();\n\nreturn [{\n  ...$json,\n  text,\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1888,
+        -384
+      ],
+      "id": "38c65559-283c-4189-a81d-33de05e41148",
+      "name": "Subtitles to text1"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  chat_id: $json.chat_id ?? $node[\"Validate URL input\"].json.chat_id,\n  full_text: $json.text, // и из субтитров, и из транскрипции\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        -240
+      ],
+      "id": "d36e1d5b-b415-40a9-b153-ae862f9b1767",
+      "name": "get full_text"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Ты ИИ-помощник. По транскрипции аудио с YouTube-ролика.\nСделай очень краткое саммари текста. 2–3 предложения.\nТолько суть, без вводных слов.\n"
+            },
+            {
+              "content": "=Вот транскрипция аудио. Сделай описание по правилам выше:\n{{ $json.full_text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [
+        2256,
+        -528
+      ],
+      "id": "1eead292-773b-4578-b969-ac69cb3ac1cc",
+      "name": "short summary",
+      "credentials": {
+        "openAiApi": {
+          "id": "G4C4Wo4D0zrVFdSM",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Validate URL input'].json['chat_id'] }}",
+        "text": "=🟨 Краткое содержание:\n{{ $json.output[0].content[0].text }}\n",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "179f7545-d83a-4ca6-bc82-ee876c68c9df",
+      "name": "Send short summary",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2560,
+        -528
+      ],
+      "webhookId": "307e4a07-83b2-485c-88d5-1fd4c5eeae83",
+      "credentials": {
+        "telegramApi": {
+          "id": "U1Ox7xbl2BXHf3rC",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $node['Validate URL input'].json['chat_id'] }}",
+        "text": "=🟦 Подробнее:\n{{ $json.output[0].content[0].text }}\n",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "9887774a-ed0a-4405-a4a9-b7008655dcfa",
+      "name": "Send normal summary",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2560,
+        -240
+      ],
+      "webhookId": "e3979c23-7eda-4ff2-b141-580cc982dee1",
+      "credentials": {
+        "telegramApi": {
+          "id": "U1Ox7xbl2BXHf3rC",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $node[\"yt-dlp: check subtitles\"].json.stdout || \"\";\n\n// Берём только первую строку — заголовок видео\nconst titleLine = stdout.trim().split('\\n')[0].trim() || \"video\";\n\n// Очистка заголовка для использования в имени файла\nlet title = titleLine\n  .replace(/[^\\p{L}\\p{N}\\s-]/gu, '')    // оставить буквы, цифры, пробелы и дефис\n  .trim()\n  .replace(/\\s+/g, '_');                // пробелы → подчёркивания\n\n\nif (title.length > 70) title = title.slice(0, 70);  // ограничиваем длину\n\nconst fileName = `${title}_text.txt`;\nconst text = $json.full_text ?? '';\nconst chatId = $json.chat_id ?? $node[\"Validate URL input\"].json.chat_id;\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    file_name: fileName,\n  },\n  binary: {\n    data: {\n      data: Buffer.from(text, 'utf8').toString('base64'),\n      mimeType: 'text/plain',\n      fileName,\n    },\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2304,
+        32
+      ],
+      "id": "d1e47164-ccb2-43f7-ba30-5377e8eb4b49",
+      "name": "Make full_text.txt (binary)"
+    },
+    {
+      "parameters": {
+        "operation": "sendDocument",
+        "chatId": "={{ $json.chat_id }}",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "=📄 Полный текст видео ({{ $json.file_name }})"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2560,
+        32
+      ],
+      "id": "15cfa958-97d8-4ef1-98cc-aedf863b2bea",
+      "name": "Send a document",
+      "webhookId": "d11f28b1-3420-4538-8a4a-21fc6e0ae7c5",
+      "credentials": {
+        "telegramApi": {
+          "id": "U1Ox7xbl2BXHf3rC",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/sendChatAction\n",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{ Number($('Telegram Trigger').item.json.message.chat.id) }},\n  \"action\": \"typing\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1616,
+        32
+      ],
+      "id": "1c271fa0-5624-4da2-9eec-7b61f103b57e",
+      "name": "Telegram Bot print 2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/sendChatAction\n",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{ Number($('Telegram Trigger').item.json.message.chat.id) }},\n  \"action\": \"typing\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1824,
+        -560
+      ],
+      "id": "458e8d09-496d-4a52-8962-86296965acdf",
+      "name": "Telegram Bot print"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/sendChatAction\n",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{ Number($('Telegram Trigger').item.json.message.chat.id) }},\n  \"action\": \"upload_document\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1616,
+        -640
+      ],
+      "id": "3a5cede0-d17f-4b01-b0a8-25242dc6cf5a",
+      "name": "Telegram Bot upload"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Validate URL input": {
+      "main": [
+        [
+          {
+            "node": "Validate URL input1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "yt-dlp: check subtitles",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send error URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract video_path from yt-dlp": {
+      "main": [
+        [
+          {
+            "node": "FFmpeg: extract audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FFmpeg: extract audio": {
+      "main": [
+        [
+          {
+            "node": "Extract audio_path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract audio_path": {
+      "main": [
+        [
+          {
+            "node": "Read audio file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read audio file": {
+      "main": [
+        [
+          {
+            "node": "Telegram Bot print 2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Transcribe audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe audio": {
+      "main": [
+        [
+          {
+            "node": "get full_text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build summary from transcript": {
+      "main": [
+        [
+          {
+            "node": "Send normal summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "If start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "yt-dlp: remove old & save new": {
+      "main": [
+        [
+          {
+            "node": "Extract video_path from yt-dlp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "yt-dlp: check subtitles": {
+      "main": [
+        [
+          {
+            "node": "Check subtitles flag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check subtitles flag": {
+      "main": [
+        [
+          {
+            "node": "If has subtitles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If has subtitles": {
+      "main": [
+        [
+          {
+            "node": "Read subtitles file",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "yt-dlp: remove old & save new",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read subtitles file": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram Bot print",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Subtitles to text1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate URL input1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If live",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If live": {
+      "main": [
+        [
+          {
+            "node": "Send live",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram Bot upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If start": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate URL input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subtitles to text1": {
+      "main": [
+        [
+          {
+            "node": "get full_text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get full_text": {
+      "main": [
+        [
+          {
+            "node": "Build summary from transcript",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "short summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Make full_text.txt (binary)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "short summary": {
+      "main": [
+        [
+          {
+            "node": "Send short summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make full_text.txt (binary)": {
+      "main": [
+        [
+          {
+            "node": "Send a document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7b9f0d61-df40-4c7f-87d4-9a0569eedd93",
+  "meta": {
+    "templateCredsSetupCompleted": true  
+  },
+  "id": "si3LzxmJ6xoa3Lc1",
+  "tags": []
+}
